@@ -17,17 +17,22 @@ export const useGame = (roomId: string, username: string) => {
     const [isLoading, setIsLoading] = useState(false);
     const [isOpponentReady, setIsOpponentReady] = useState(false);
 
-    // ANTI-CHEAT: Lock state
     const [isLocked, setIsLocked] = useState(false);
     const [lockTimer, setLockTimer] = useState(0);
 
     const channelRef = useRef<any>(null);
-    const gameStartedRef = useRef(false);
+    const gameStateRef = useRef<GameState>('LOBBY');
 
-    // Initial setup: Lobby + Presence
+    // Keep ref in sync for event listeners
+    useEffect(() => {
+        gameStateRef.current = gameState;
+    }, [gameState]);
+
+    // Initial setup: Persistent Connection (Only once!)
     useEffect(() => {
         if (!roomId || !username) return;
 
+        console.log(`[Game] Connecting to room_${roomId}...`);
         const channel = supabase.channel(`room_${roomId}`, {
             config: { presence: { key: username } }
         });
@@ -40,42 +45,35 @@ export const useGame = (roomId: string, username: string) => {
                 if (otherPlayer) setOpponentName(otherPlayer);
             })
             .on('broadcast', { event: 'start_selection' }, ({ payload }) => {
-                if (payload.pool) {
+                if (payload?.pool) {
                     setSelectionPool(payload.pool);
-                    setGameState('SELECTING');
-                } else if (gameState === 'LOBBY') {
                     setGameState('SELECTING');
                 }
             })
             .on('broadcast', { event: 'choice_ready' }, ({ payload }) => {
-                if (payload.user !== username) {
+                if (payload?.user !== username) {
                     setIsOpponentReady(true);
                     setSecretCharacter(payload.character);
                 }
             })
-            .on('broadcast', { event: 'game_start' }, ({ payload }) => {
-                if (gameStartedRef.current) return;
-                setGameState('PLAYING');
-                gameStartedRef.current = true;
-                // Characters are generated in finalizeGameStart triggered by local effect
+            .on('broadcast', { event: 'game_start' }, () => {
+                if (gameStateRef.current !== 'PLAYING') {
+                    setGameState('PLAYING');
+                }
             })
             .on('broadcast', { event: 'move' }, ({ payload }) => {
-                if (payload.user !== username) {
-                    setOpponentProgress(payload.progress);
+                if (payload?.user !== username) {
+                    setOpponentProgress(payload.progress || 0);
                 }
             })
             .on('broadcast', { event: 'win' }, ({ payload }) => {
-                if (payload.user !== username) {
+                if (payload?.user !== username) {
                     setGameState('LOST');
                 }
             })
-            .on('broadcast', { event: 'wrong_guess' }, ({ payload }) => {
-                if (payload.user !== username) {
-                    // Just notification handled in UI through events
-                }
-            })
             .on('broadcast', { event: 'restart' }, () => {
-                resetGameState();
+                resetLocalState();
+                setGameState('LOBBY');
             })
             .subscribe(async (status) => {
                 if (status === 'SUBSCRIBED') {
@@ -86,20 +84,19 @@ export const useGame = (roomId: string, username: string) => {
         channelRef.current = channel;
 
         return () => {
+            console.log("[Game] Disconnecting...");
             channel.unsubscribe();
         };
-    }, [roomId, username, gameState]);
+    }, [roomId, username]); // IMPORTANT: gameState is NOT here anymore
 
-    const resetGameState = () => {
+    const resetLocalState = () => {
         setCharacters([]);
         setUpCards(new Set());
         setMySelection(null);
         setSecretCharacter(null);
         setIsOpponentReady(false);
-        gameStartedRef.current = false;
         setIsLocked(false);
         setLockTimer(0);
-        setGameState('LOBBY');
     };
 
     // Lock Timer effect
@@ -128,11 +125,12 @@ export const useGame = (roomId: string, username: string) => {
         }
     }, []);
 
+    // Local stabilization for board generation
     useEffect(() => {
-        if (gameState === 'SELECTING' && mySelection && isOpponentReady && secretCharacter && !gameStartedRef.current) {
+        if (gameState === 'SELECTING' && mySelection && isOpponentReady && secretCharacter && characters.length === 0) {
             finalizeGameStart();
         }
-    }, [mySelection, isOpponentReady, secretCharacter, gameState]);
+    }, [mySelection, isOpponentReady, secretCharacter, gameState, characters.length]);
 
     const selectCharacter = useCallback(async (char: Character) => {
         setMySelection(char);
@@ -146,7 +144,7 @@ export const useGame = (roomId: string, username: string) => {
     }, [username]);
 
     const finalizeGameStart = async () => {
-        if (gameStartedRef.current || isLoading) return;
+        if (isLoading || characters.length > 0) return;
         setIsLoading(true);
 
         const boardSize = 47;
@@ -157,7 +155,6 @@ export const useGame = (roomId: string, username: string) => {
         setCharacters(board);
         setUpCards(new Set(board.map(c => c.id)));
         setGameState('PLAYING');
-        gameStartedRef.current = true;
         setIsLoading(false);
 
         if (channelRef.current) {
@@ -203,10 +200,8 @@ export const useGame = (roomId: string, username: string) => {
                 });
             }
         } else {
-            // ANTI-CHEAT: Lock 10 seconds on wrong guess
             setIsLocked(true);
             setLockTimer(10);
-
             if (channelRef.current) {
                 channelRef.current.send({
                     type: 'broadcast',
@@ -219,7 +214,7 @@ export const useGame = (roomId: string, username: string) => {
     };
 
     const handleRestart = useCallback(async () => {
-        resetGameState();
+        resetLocalState();
         if (channelRef.current) {
             channelRef.current.send({
                 type: 'broadcast',
@@ -233,7 +228,7 @@ export const useGame = (roomId: string, username: string) => {
     return {
         gameState,
         characters,
-        selectionPool,
+        selectionPool: selectionPool || [],
         mySelection,
         upCards,
         secretCharacter,
