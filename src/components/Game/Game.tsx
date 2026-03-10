@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGame } from '../../hooks/useGame';
 import { CharacterCard } from './CharacterCard';
 import { Button } from '../UI/Button';
-import { Loader2, RefreshCcw, User, RotateCcw, Play, Users, Target, Lock, AlertTriangle } from 'lucide-react';
+import { Loader2, RefreshCcw, User, RotateCcw, Play, Users, Target, Lock } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface GameProps {
