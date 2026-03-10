@@ -212,7 +212,7 @@ export const Game: React.FC<GameProps> = ({ roomId, username }) => {
 
             {/* Main Board */}
             <main className="flex-1 p-4 lg:p-8 order-1 lg:order-2 overflow-y-auto max-h-screen">
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3">
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 2xl:grid-cols-12 gap-2 sm:gap-3">
                     <AnimatePresence>
                         {characters.map((char) => (
                             <CharacterCard

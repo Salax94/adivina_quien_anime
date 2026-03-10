@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { fetchCharacters, fetchPool } from '../services/api';
+import { fetchPool } from '../services/api';
 import type { Character } from '../services/api';
 
 export type GameState = 'LOBBY' | 'SELECTING' | 'PLAYING' | 'WON' | 'LOST';
@@ -137,12 +137,13 @@ export const useGame = (roomId: string, username: string) => {
         if (gameStartedRef.current || isLoading) return;
         setIsLoading(true);
 
-        const randomChars = await fetchCharacters(60, secretCharacter?.id);
-        const filtered = randomChars
-            .filter(c => c.id !== secretCharacter?.id)
-            .slice(0, 47);
+        // Adjusting to 48 total cards (Original was 24, double is 48)
+        const boardSize = 47;
+        const randomChars = await fetchPool(boardSize + 3);
 
-        const board = [...filtered, secretCharacter!].sort(() => Math.random() - 0.5);
+        // Ensure secret character is in the board and no duplicates
+        const filtered = randomChars.filter(c => c.id !== secretCharacter?.id);
+        const board = [secretCharacter!, ...filtered.slice(0, boardSize)].sort(() => Math.random() - 0.5); // 1 secret + 47 others = 48 total
 
         setCharacters(board);
         setUpCards(new Set(board.map(c => c.id)));
@@ -150,11 +151,12 @@ export const useGame = (roomId: string, username: string) => {
         gameStartedRef.current = true;
         setIsLoading(false);
 
+        // We still broadcast that we started, but we don't send the board (each generates their own)
         if (channelRef.current) {
             channelRef.current.send({
                 type: 'broadcast',
                 event: 'game_start',
-                payload: { board }
+                payload: { started: true }
             });
         }
     };
