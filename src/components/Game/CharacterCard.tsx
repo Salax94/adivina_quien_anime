@@ -86,8 +86,8 @@ export const CharacterCard: React.FC<CharacterCardProps> = ({
                     )}
                 >
                     {theme === 'cyberpunk' ? (
-                        <div className="flex flex-col items-center">
-                            <span className="text-3xl font-black text-red-500/50 glitch-text tracking-widest uppercase">ELIMINADO</span>
+                        <div className="flex flex-col items-center px-2">
+                            <span className="text-xl font-black text-red-500/50 glitch-text tracking-tighter uppercase text-center leading-none">ELIMINADO</span>
                             <div className="w-12 h-0.5 bg-red-500/30 mt-2 animate-pulse" />
                         </div>
                     ) : theme === 'kawaii' ? (
