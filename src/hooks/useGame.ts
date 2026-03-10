@@ -17,22 +17,22 @@ export const useGame = (roomId: string, username: string) => {
     const [isLoading, setIsLoading] = useState(false);
     const [isOpponentReady, setIsOpponentReady] = useState(false);
 
+    // Anti-cheat/spam lock
     const [isLocked, setIsLocked] = useState(false);
     const [lockTimer, setLockTimer] = useState(0);
 
     const channelRef = useRef<any>(null);
     const gameStateRef = useRef<GameState>('LOBBY');
 
-    // Keep ref in sync for event listeners
+    // Update ref for listeners
     useEffect(() => {
         gameStateRef.current = gameState;
     }, [gameState]);
 
-    // Initial setup: Persistent Connection (Only once!)
+    // Single persistent connection
     useEffect(() => {
         if (!roomId || !username) return;
 
-        console.log(`[Game] Connecting to room_${roomId}...`);
         const channel = supabase.channel(`room_${roomId}`, {
             config: { presence: { key: username } }
         });
@@ -40,18 +40,20 @@ export const useGame = (roomId: string, username: string) => {
         channel
             .on('presence', { event: 'sync' }, () => {
                 const state = channel.presenceState();
-                const players = Object.keys(state);
+                const players = Object.keys(state) || [];
                 const otherPlayer = players.find(p => p !== username);
                 if (otherPlayer) setOpponentName(otherPlayer);
             })
-            .on('broadcast', { event: 'start_selection' }, ({ payload }) => {
-                if (payload?.pool) {
-                    setSelectionPool(payload.pool);
+            .on('broadcast', { event: 'start_selection' }, (data) => {
+                const pool = data?.payload?.pool;
+                if (pool && Array.isArray(pool)) {
+                    setSelectionPool(pool);
                     setGameState('SELECTING');
                 }
             })
-            .on('broadcast', { event: 'choice_ready' }, ({ payload }) => {
-                if (payload?.user !== username) {
+            .on('broadcast', { event: 'choice_ready' }, (data) => {
+                const payload = data?.payload;
+                if (payload?.user !== username && payload?.character) {
                     setIsOpponentReady(true);
                     setSecretCharacter(payload.character);
                 }
@@ -61,12 +63,14 @@ export const useGame = (roomId: string, username: string) => {
                     setGameState('PLAYING');
                 }
             })
-            .on('broadcast', { event: 'move' }, ({ payload }) => {
+            .on('broadcast', { event: 'move' }, (data) => {
+                const payload = data?.payload;
                 if (payload?.user !== username) {
-                    setOpponentProgress(payload.progress || 0);
+                    setOpponentProgress(payload?.progress || 0);
                 }
             })
-            .on('broadcast', { event: 'win' }, ({ payload }) => {
+            .on('broadcast', { event: 'win' }, (data) => {
+                const payload = data?.payload;
                 if (payload?.user !== username) {
                     setGameState('LOST');
                 }
@@ -84,10 +88,9 @@ export const useGame = (roomId: string, username: string) => {
         channelRef.current = channel;
 
         return () => {
-            console.log("[Game] Disconnecting...");
             channel.unsubscribe();
         };
-    }, [roomId, username]); // IMPORTANT: gameState is NOT here anymore
+    }, [roomId, username]);
 
     const resetLocalState = () => {
         setCharacters([]);
@@ -99,7 +102,6 @@ export const useGame = (roomId: string, username: string) => {
         setLockTimer(0);
     };
 
-    // Lock Timer effect
     useEffect(() => {
         if (lockTimer > 0) {
             const timer = setTimeout(() => setLockTimer(prev => prev - 1), 1000);
@@ -112,7 +114,7 @@ export const useGame = (roomId: string, username: string) => {
     const startSelection = useCallback(async () => {
         setIsLoading(true);
         const pool = await fetchPool(50);
-        setSelectionPool(pool);
+        setSelectionPool(pool || []);
         setGameState('SELECTING');
         setIsLoading(false);
 
@@ -125,7 +127,6 @@ export const useGame = (roomId: string, username: string) => {
         }
     }, []);
 
-    // Local stabilization for board generation
     useEffect(() => {
         if (gameState === 'SELECTING' && mySelection && isOpponentReady && secretCharacter && characters.length === 0) {
             finalizeGameStart();
@@ -149,7 +150,7 @@ export const useGame = (roomId: string, username: string) => {
 
         const boardSize = 47;
         const randomChars = await fetchPool(boardSize + 5);
-        const filtered = randomChars.filter(c => c.id !== secretCharacter?.id);
+        const filtered = (randomChars || []).filter(c => c.id !== secretCharacter?.id);
         const board = [secretCharacter!, ...filtered.slice(0, boardSize)].sort(() => Math.random() - 0.5);
 
         setCharacters(board);
@@ -177,7 +178,7 @@ export const useGame = (roomId: string, username: string) => {
         }
         setUpCards(next);
 
-        const progress = characters.length - next.size;
+        const progress = (characters || []).length - next.size;
         if (channelRef.current) {
             channelRef.current.send({
                 type: 'broadcast',
@@ -202,14 +203,7 @@ export const useGame = (roomId: string, username: string) => {
         } else {
             setIsLocked(true);
             setLockTimer(10);
-            if (channelRef.current) {
-                channelRef.current.send({
-                    type: 'broadcast',
-                    event: 'wrong_guess',
-                    payload: { user: username }
-                });
-            }
-            alert('¡Incorrecto! Has sido bloqueado por 10 segundos.');
+            alert('¡Incorrecto! Bloqueado por 10 segundos.');
         }
     };
 
@@ -227,7 +221,7 @@ export const useGame = (roomId: string, username: string) => {
 
     return {
         gameState,
-        characters,
+        characters: characters || [],
         selectionPool: selectionPool || [],
         mySelection,
         upCards,
