@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGame } from '../../hooks/useGame';
 import { CharacterCard } from './CharacterCard';
 import { Button } from '../UI/Button';
-import { Loader2, RefreshCcw, User, RotateCcw, Play, Users, Target } from 'lucide-react';
+import { Loader2, RefreshCcw, User, RotateCcw, Play, Users, Target, Lock, AlertTriangle } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface GameProps {
@@ -23,12 +23,24 @@ export const Game: React.FC<GameProps> = ({ roomId, username }) => {
         opponentProgress,
         isLoading,
         isOpponentReady,
+        isLocked,
+        lockTimer,
         startSelection,
         selectCharacter,
         toggleCard,
         guessCharacter,
         handleRestart
     } = useGame(roomId, username);
+
+    const [alertText, setAlertText] = useState<string | null>(null);
+
+    // Initial setup: Alert cleanup
+    useEffect(() => {
+        if (alertText) {
+            const timer = setTimeout(() => setAlertText(null), 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [alertText]);
 
     // 1. Loading State (Global)
     if (isLoading && characters.length === 0) {
@@ -147,7 +159,29 @@ export const Game: React.FC<GameProps> = ({ roomId, username }) => {
 
     // 4. Playing View (Board)
     return (
-        <div className="min-h-screen flex flex-col lg:flex-row">
+        <div className="min-h-screen flex flex-col lg:flex-row relative">
+            {/* Lock Overlay */}
+            <AnimatePresence>
+                {isLocked && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center pointer-events-auto"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.8 }}
+                            animate={{ scale: 1 }}
+                            className="bg-red-600 p-8 rounded-3xl shadow-2xl text-center space-y-4 border-4 border-red-400"
+                        >
+                            <Lock className="w-16 h-16 text-white mx-auto animate-bounce" />
+                            <h2 className="text-3xl font-black text-white italic uppercase tracking-tighter">¡PENALIZACIÓN!</h2>
+                            <p className="text-red-100 font-bold">Has fallado. Bloqueado por {lockTimer}s</p>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* Sidebar - Player Info */}
             <aside className="w-full lg:w-80 glass p-6 flex flex-col gap-8 border-r border-white/5 order-2 lg:order-1">
                 <div className="space-y-4">
@@ -200,11 +234,11 @@ export const Game: React.FC<GameProps> = ({ roomId, username }) => {
                     <h3 className="text-xs font-black uppercase tracking-widest opacity-50 mt-4 underline decoration-[var(--accent-color)]">Tú debes adivinar a:</h3>
                     <div className="p-4 border border-dashed border-white/20 rounded-2xl w-full flex items-center justify-center gap-2 bg-white/5">
                         <Target className="w-5 h-5 text-[var(--accent-color)] animate-pulse" />
-                        <span className="text-xs font-bold opacity-80 uppercase tracking-tighter italic">¡Usa las pistas!</span>
+                        <span className="text-xs font-bold opacity-80 uppercase tracking-tighter italic text-center">¡Usa el botón de la diana para adivinar!</span>
                     </div>
                 </div>
 
-                <Button variant="outline" className="w-full" onClick={handleRestart}>
+                <Button variant="outline" className="w-full opacity-50 hover:opacity-100 transition-opacity" onClick={handleRestart}>
                     <RefreshCcw className="w-4 h-4" />
                     Abandonar Partida
                 </Button>
@@ -233,7 +267,7 @@ export const Game: React.FC<GameProps> = ({ roomId, username }) => {
                     <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6"
+                        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-6"
                     >
                         <motion.div
                             initial={{ scale: 0.9, opacity: 0 }}
@@ -251,18 +285,21 @@ export const Game: React.FC<GameProps> = ({ roomId, username }) => {
                                     {gameState === 'WON' ? '¡VICTORIA!' : '¡DERROTA!'}
                                 </h2>
                                 <div className="space-y-4">
-                                    <p className="text-lg opacity-80">
+                                    <p className="text-lg opacity-80 text-white">
                                         {gameState === 'WON'
                                             ? '¡Increíble! Has descubierto su personaje secreto.'
                                             : 'Lástima... Tu oponente adivinó más rápido.'}
                                     </p>
                                     {secretCharacter && (
-                                        <div className="w-32 mx-auto">
-                                            <CharacterCard character={secretCharacter} isDown={false} onClick={() => { }} />
+                                        <div className="w-full flex flex-col items-center gap-2">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-[var(--accent-color)]">El Secreto era:</p>
+                                            <div className="w-32">
+                                                <CharacterCard character={secretCharacter} isDown={false} onClick={() => { }} />
+                                            </div>
                                         </div>
                                     )}
                                 </div>
-                                <Button variant="primary" onClick={handleRestart} className="w-full h-14 text-lg uppercase font-bold">
+                                <Button variant="primary" onClick={handleRestart} className="w-full h-14 text-lg uppercase font-bold bg-[var(--accent-color)]">
                                     <RotateCcw className="w-5 h-5" />
                                     Revancha
                                 </Button>

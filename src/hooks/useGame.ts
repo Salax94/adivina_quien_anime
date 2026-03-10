@@ -17,6 +17,10 @@ export const useGame = (roomId: string, username: string) => {
     const [isLoading, setIsLoading] = useState(false);
     const [isOpponentReady, setIsOpponentReady] = useState(false);
 
+    // ANTI-CHEAT: Lock state
+    const [isLocked, setIsLocked] = useState(false);
+    const [lockTimer, setLockTimer] = useState(0);
+
     const channelRef = useRef<any>(null);
     const gameStartedRef = useRef(false);
 
@@ -36,12 +40,10 @@ export const useGame = (roomId: string, username: string) => {
                 if (otherPlayer) setOpponentName(otherPlayer);
             })
             .on('broadcast', { event: 'start_selection' }, ({ payload }) => {
-                // 1. One player fetches the pool and shares it to avoid 429
                 if (payload.pool) {
                     setSelectionPool(payload.pool);
                     setGameState('SELECTING');
                 } else if (gameState === 'LOBBY') {
-                    // Fallback for case where pool isn't in payload (shouldn't happen with new logic)
                     setGameState('SELECTING');
                 }
             })
@@ -53,10 +55,9 @@ export const useGame = (roomId: string, username: string) => {
             })
             .on('broadcast', { event: 'game_start' }, ({ payload }) => {
                 if (gameStartedRef.current) return;
-                setCharacters(payload.board);
-                setUpCards(new Set(payload.board.map((c: Character) => c.id)));
                 setGameState('PLAYING');
                 gameStartedRef.current = true;
+                // Characters are generated in finalizeGameStart triggered by local effect
             })
             .on('broadcast', { event: 'move' }, ({ payload }) => {
                 if (payload.user !== username) {
@@ -66,6 +67,11 @@ export const useGame = (roomId: string, username: string) => {
             .on('broadcast', { event: 'win' }, ({ payload }) => {
                 if (payload.user !== username) {
                     setGameState('LOST');
+                }
+            })
+            .on('broadcast', { event: 'wrong_guess' }, ({ payload }) => {
+                if (payload.user !== username) {
+                    // Just notification handled in UI through events
                 }
             })
             .on('broadcast', { event: 'restart' }, () => {
@@ -91,13 +97,23 @@ export const useGame = (roomId: string, username: string) => {
         setSecretCharacter(null);
         setIsOpponentReady(false);
         gameStartedRef.current = false;
+        setIsLocked(false);
+        setLockTimer(0);
         setGameState('LOBBY');
     };
 
-    // Start selection: ONLY the host fetches to prevent 429
+    // Lock Timer effect
+    useEffect(() => {
+        if (lockTimer > 0) {
+            const timer = setTimeout(() => setLockTimer(prev => prev - 1), 1000);
+            return () => clearTimeout(timer);
+        } else if (lockTimer === 0 && isLocked) {
+            setIsLocked(false);
+        }
+    }, [lockTimer, isLocked]);
+
     const startSelection = useCallback(async () => {
         setIsLoading(true);
-        // Local cache to avoid re-fetching the same list in the same session
         const pool = await fetchPool(50);
         setSelectionPool(pool);
         setGameState('SELECTING');
@@ -107,22 +123,19 @@ export const useGame = (roomId: string, username: string) => {
             channelRef.current.send({
                 type: 'broadcast',
                 event: 'start_selection',
-                payload: { pool } // Transmit the pool to the other player
+                payload: { pool }
             });
         }
     }, []);
 
-    // Automatic game start when both are ready
     useEffect(() => {
         if (gameState === 'SELECTING' && mySelection && isOpponentReady && secretCharacter && !gameStartedRef.current) {
             finalizeGameStart();
         }
     }, [mySelection, isOpponentReady, secretCharacter, gameState]);
 
-    // Pick my secret character
     const selectCharacter = useCallback(async (char: Character) => {
         setMySelection(char);
-
         if (channelRef.current) {
             channelRef.current.send({
                 type: 'broadcast',
@@ -132,18 +145,14 @@ export const useGame = (roomId: string, username: string) => {
         }
     }, [username]);
 
-    // Generate the final game board
     const finalizeGameStart = async () => {
         if (gameStartedRef.current || isLoading) return;
         setIsLoading(true);
 
-        // Adjusting to 48 total cards (Original was 24, double is 48)
         const boardSize = 47;
-        const randomChars = await fetchPool(boardSize + 3);
-
-        // Ensure secret character is in the board and no duplicates
+        const randomChars = await fetchPool(boardSize + 5);
         const filtered = randomChars.filter(c => c.id !== secretCharacter?.id);
-        const board = [secretCharacter!, ...filtered.slice(0, boardSize)].sort(() => Math.random() - 0.5); // 1 secret + 47 others = 48 total
+        const board = [secretCharacter!, ...filtered.slice(0, boardSize)].sort(() => Math.random() - 0.5);
 
         setCharacters(board);
         setUpCards(new Set(board.map(c => c.id)));
@@ -151,7 +160,6 @@ export const useGame = (roomId: string, username: string) => {
         gameStartedRef.current = true;
         setIsLoading(false);
 
-        // We still broadcast that we started, but we don't send the board (each generates their own)
         if (channelRef.current) {
             channelRef.current.send({
                 type: 'broadcast',
@@ -162,7 +170,7 @@ export const useGame = (roomId: string, username: string) => {
     };
 
     const toggleCard = (id: number) => {
-        if (gameState !== 'PLAYING') return;
+        if (gameState !== 'PLAYING' || isLocked) return;
 
         const next = new Set(upCards);
         if (next.has(id)) {
@@ -180,23 +188,11 @@ export const useGame = (roomId: string, username: string) => {
                 payload: { user: username, progress: progress }
             });
         }
-
-        if (next.size === 1) {
-            const lastId = Array.from(next)[0];
-            if (secretCharacter && lastId === secretCharacter.id) {
-                setGameState('WON');
-                if (channelRef.current) {
-                    channelRef.current.send({
-                        type: 'broadcast',
-                        event: 'win',
-                        payload: { user: username }
-                    });
-                }
-            }
-        }
     };
 
     const guessCharacter = (charId: number) => {
+        if (gameState !== 'PLAYING' || isLocked) return;
+
         if (secretCharacter && charId === secretCharacter.id) {
             setGameState('WON');
             if (channelRef.current) {
@@ -207,7 +203,18 @@ export const useGame = (roomId: string, username: string) => {
                 });
             }
         } else {
-            alert('¡Incorrecto! No es el personaje secreto.');
+            // ANTI-CHEAT: Lock 10 seconds on wrong guess
+            setIsLocked(true);
+            setLockTimer(10);
+
+            if (channelRef.current) {
+                channelRef.current.send({
+                    type: 'broadcast',
+                    event: 'wrong_guess',
+                    payload: { user: username }
+                });
+            }
+            alert('¡Incorrecto! Has sido bloqueado por 10 segundos.');
         }
     };
 
@@ -234,6 +241,8 @@ export const useGame = (roomId: string, username: string) => {
         opponentProgress,
         isLoading,
         isOpponentReady,
+        isLocked,
+        lockTimer,
         startSelection,
         selectCharacter,
         toggleCard,
